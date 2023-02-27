@@ -1,6 +1,9 @@
 import argparse
+import datetime
+import dateutil
+from dataclasses import dataclass
 from collections import defaultdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import boto3
 from botocove import cove, CoveSession
@@ -22,19 +25,26 @@ logger.setLevel(logging.INFO)
 has_enumeration_errors: bool = False
 
 
-def log_enumeration_failure(service: str, session: CoveSession, error) -> None:
-    def _get_aws_account_id(session: boto3.session) -> str:
-        try:
-            sts_client = session.client('sts')
-            identity = sts_client.get_caller_identity()
-            return identity['Account']
-        except Exception:
-            return "AccountIdNotFound"
+@dataclass
+class VmImage:
+    id: str
+    create_time: datetime.datetime
 
+
+def get_aws_account_id(session: boto3.session) -> str:
+    try:
+        sts_client = session.client('sts')
+        identity = sts_client.get_caller_identity()
+        return identity['Account']
+    except Exception:
+        return "AccountIdNotFound"
+
+
+def log_enumeration_failure(service: str, session: CoveSession, error) -> None:
     if hasattr(session, "session_information"):
         account_id = session.session_information['Id']
     else:
-        account_id = _get_aws_account_id(session)
+        account_id = get_aws_account_id(session)
     logger.error(f"Failed to count {service} for account: {account_id}, error: {error}")
     global has_enumeration_errors
     has_enumeration_errors = True
@@ -113,16 +123,41 @@ def get_region_ecr_repos(session: CoveSession, service_name: str, region_name: O
     return count
 
 
+def is_image_used(vm_image: VmImage, client: boto3.client) -> bool:
+    def get_image_last_used_time(vm_image: VmImage) -> Optional[datetime.datetime]:
+        params = {
+            "ImageId": vm_image.id,
+            "Attribute": "lastLaunchedTime",
+        }
+        response = client.describe_image_attribute(**params)
+
+        if last_launched_time := response.get("LastLaunchedTime", {}).get("Value"):
+            return dateutil.parser.parse(last_launched_time)
+        return None
+
+    last_valid_use_date = datetime.datetime.now(dateutil.tz.tzlocal()) - datetime.timedelta(days=30)
+    if vm_image.create_time > last_valid_use_date:
+        return True
+
+    last_used = get_image_last_used_time(vm_image)
+    if last_used and last_used > last_valid_use_date:
+        return True
+    else:
+        return False
+
+
 @retry
 def get_region_vm_images(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("ec2", region_name=region_name)
     paginator = client.get_paginator("describe_images")
-    count = 0
+    vm_images: List[VmImage] = []
     for page in paginator.paginate(Owners=['self']):
-        count += len(page["Images"])
-    return count
+        vm_images.extend([VmImage(id=image["ImageId"], create_time=datetime.datetime.fromisoformat(
+            image["CreationDate"].replace("Z", "+00:00"))) for image in page["Images"]])
+    used_vm_images_count = len([vm_image.id for vm_image in vm_images if is_image_used(vm_image, client)])
+    return used_vm_images_count
 
 
 @retry
@@ -200,43 +235,113 @@ def current_account_resources_count(session: boto3.Session) -> Dict[str, int]:
     return total_results
 
 
-def print_results(results: Dict[str, int]) -> None:
-    logger.info("==============\nTotal results:\n==============")
+def print_results(results: Dict[str, int], account_id: Optional[str]=None) -> None:
+    log_total_results = account_id is None
+    result_str = "\n==============\nTotal results:\n==============\n" if log_total_results else f"AWS Account number: [{account_id}]\n"
     total_workloads = 0
     for service, count in results.items():
         if service == "ecr":
-            count = count * 2  # we scan 2 images per one repository
+            count = count * 1.1  # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
         workloads = round(count / SERVICES_CONF[service]['workload_units'])
         if workloads == 0 and count > 0:
             workloads = 1
-        logger.info(f"{SERVICES_CONF[service]['display_name']} Count: {count} (Workload Units: {workloads})")
+        result_str += f"{SERVICES_CONF[service]['display_name']} Count: {round(count)}{f' (Workload Units: {workloads})' if log_total_results else ''}\n"
         total_workloads += workloads
-    logger.info("-----------------------------------------\n"
-                ""f"TOTAL Estimated Workload Units: {total_workloads}")
+    if log_total_results:
+        result_str += f"-----------------------------------------\nTOTAL estimated workload units: {total_workloads}\n"
+    logger.info(result_str)
+
+
+def log_results_per_account(total_results: Dict[str, Any]) -> None:
+    results_per_account: Dict[str, Dict[str, int]] = {result["Id"]: defaultdict(int) for result in total_results["Results"]}
+    for result in total_results["Results"]:
+        account_id = result["Id"]
+        for service, count in result["Result"].items():
+            results_per_account[account_id][service] += count
+    for account_id, results in results_per_account.items():
+        print_results(results, account_id)
+
+
+def set_skip_resources(args: argparse.Namespace) -> None:
+    skipped_resources: List[str] = []
+    if args.skip_vms:
+        skipped_resources.append(SERVICES_CONF["ec2"]['display_name'])
+        SERVICES_CONF.pop("ec2")
+    if args.skip_serverless_functions:
+        skipped_resources.append(SERVICES_CONF["lambda"]['display_name'])
+        SERVICES_CONF.pop("lambda")
+    if args.skip_container_images:
+        skipped_resources.append(SERVICES_CONF["ecr"]['display_name'])
+        SERVICES_CONF.pop("ecr")
+    if args.skip_vm_images:
+        skipped_resources.append(SERVICES_CONF["ami"]['display_name'])
+        SERVICES_CONF.pop("ami")
+    if args.skip_serverless_containers:
+        skipped_resources.append(SERVICES_CONF["ecs"]['display_name'])
+        SERVICES_CONF.pop("ecs")
+    if args.skip_container_hosts:
+        skipped_resources.append(SERVICES_CONF["eks"]['display_name'])
+        SERVICES_CONF.pop("eks")
+    if skipped_resources:
+        logger.info(f"Skip counting the following resources: {', '.join(skipped_resources)}.")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--only-current-account", action="store_true",
-                        help="Count resources only for the current account")
-    args = parser.parse_args()
-    total_results: Dict[str, int] = current_account_resources_count(boto3.Session())
+    _parser = argparse.ArgumentParser()
+    _parser.add_argument("--only-current-account", action="store_true",
+                         help="Count resources only for the current account")
+
+    _parser.add_argument("--skip-vms", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['ec2']['display_name']}")
+
+    _parser.add_argument("--skip-serverless-functions", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['lambda']['display_name']}")
+
+    _parser.add_argument("--skip-container-images", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['ecr']['display_name']}")
+
+    _parser.add_argument("--skip-vm-images", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['ami']['display_name']}")
+
+    _parser.add_argument("--skip-serverless-containers", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['ecs']['display_name']}")
+
+    _parser.add_argument("--skip-container-hosts", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['eks']['display_name']}")
+
+    _parser.add_argument("--show-logs-per-account", action="store_true",
+                         help=f"Log resource count per AWS account")
+
+    args = _parser.parse_args()
+    set_skip_resources(args)
+    if not SERVICES_CONF:
+        logger.info("All AWS services requested to be skipped, please choose at least one service to count.")
+        return
+    show_logs_per_account: bool = args.show_logs_per_account
+    session = boto3.Session()
+    total_results: Dict[str, int] = current_account_resources_count(session)
     if args.only_current_account:
+        if show_logs_per_account:
+            print_results(total_results, account_id=get_aws_account_id(session=session))
         print_results(total_results)
     else:
         try:
             logger.info("Start Counting resources for all the Organization's accounts...")
-            account_region_resources = get_cove_region_resources()
-            for result in account_region_resources["Results"]:
+            results_of_all_regions = get_cove_region_resources()
+            if show_logs_per_account:  # log current account results
+                print_results(total_results, account_id=get_aws_account_id(session=session))
+            for result in results_of_all_regions["Results"]:
                 for service, count in result["Result"].items():
                     total_results[service] += count
+            if show_logs_per_account:
+                log_results_per_account(results_of_all_regions)
             print_results(total_results)
 
-            errors = len(account_region_resources["Exceptions"] + account_region_resources["FailedAssumeRole"])
+            errors = len(results_of_all_regions["Exceptions"] + results_of_all_regions["FailedAssumeRole"])
             if errors:
                 logger.warning(f"Encountered {errors} errors")
-                logger.warning(f"Exceptions: {account_region_resources['Exceptions']}")
-                logger.warning(f"FailedAssumeRole: {account_region_resources['FailedAssumeRole']}")
+                logger.warning(f"Exceptions: {results_of_all_regions['Exceptions']}")
+                logger.warning(f"FailedAssumeRole: {results_of_all_regions['FailedAssumeRole']}")
         except AttributeError as e:
             if "'CoveHostAccount' object has no attribute 'organization_account_ids'" in str(e):
                 logger.warning(

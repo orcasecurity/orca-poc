@@ -99,7 +99,7 @@ for project in $PROJECTS; do
         fi
     done
     if [[ -n "$project_container_images_count" && "$project_container_images_count" -ne 0 ]]; then
-      project_container_images_count=$(( project_container_images_count*2 )) # we scan 2 images per one repository
+      project_container_images_count=$(echo "$project_container_images_count*1.1" | awk '{printf "%.0f", $0}') # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
       total_container_images=$((total_container_images + project_container_images_count))
       echo "Container Images Count: $project_container_images_count"
     fi

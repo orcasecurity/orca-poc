@@ -143,7 +143,7 @@ for subscription in $subscriptions; do
     for group in $(echo "$container_groups" | jq -c '.[]'); do
       group_name=$(echo $group | jq -r '.name')
       rg_name=$(echo $group | jq -r '.resourceGroup')
-      az container show --subscription $subscription -n $group_name -g $rg_name --query 'length(containers)' -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
+      az container show --subscription $subscription -n $group_name -g $rg_name --query 'length(containers)' -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Containers for subscription ${subscription}"
       currentContainerCount=$((currentContainerCount + $(cat "${_temp_subscription_output}")))
     done
     if [ -n "$currentContainerCount" ]; then
@@ -161,7 +161,7 @@ for subscription in $subscriptions; do
         currentAcrCount=$((currentAcrCount + $(cat "${_temp_subscription_output}")))
     done
     if [ -n "$currentAcrCount" ]; then
-        currentAcrCount=$(( currentAcrCount*2 )) # we scan 2 images per one repository
+        currentAcrCount=$(echo "$currentAcrCount*1.1" | awk '{printf "%.0f", $0}') # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
         echo "Container Images Count: $currentAcrCount"
         containerImageCount=$((containerImageCount + currentAcrCount))
     fi
