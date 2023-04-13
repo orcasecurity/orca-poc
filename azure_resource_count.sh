@@ -182,7 +182,9 @@ for subscription in $subscriptions; do
       cluster_name=$(echo $cluster | jq -r '.name')
       rg_name=$(echo $cluster | jq -r '.resourceGroup')
       az aks show --subscription $subscription --resource-group $rg_name --name $cluster_name --query "agentPoolProfiles[].count" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
-      currentNodesCount=$((currentNodesCount + $(cat "${_temp_subscription_output}")))
+      for nodes in $(cat "${_temp_subscription_output}"); do
+        currentNodesCount=$((currentNodesCount + nodes))
+      done
     done
     if [ -n "$currentNodesCount" ]; then
         echo "Container Hosts Count: $currentNodesCount"
