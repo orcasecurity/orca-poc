@@ -111,7 +111,7 @@ for project in $PROJECTS; do
       echo "VM images Count: $project_vm_images_count"
     fi
 
-    gcloud -q container clusters list --project "${project}" --format='get(currentNodeCount)' > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Container Hosts for project ${project}"
+    gcloud -q container clusters list --project "${project}" --format='get(currentNodeCount)' --filter="NOT autopilot.enabled:true"> ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Container Hosts for project ${project}"
     clusters_node_counts=$(cat "${_temp_project_output}")
     project_nodes_count=0
     for node_count in $clusters_node_counts; do
