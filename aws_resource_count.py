@@ -181,36 +181,60 @@ def get_region_cluster_nodes(session: CoveSession, service_name: str, region_nam
     return count
 
 
+@retry
+def get_region_managed_dbs(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("rds", region_name=region_name)
+    paginator = client.get_paginator("describe_db_instances")
+    count = 0
+    clusters_set = set()
+    for page in paginator.paginate():
+        for db_instance in page["DBInstances"]:
+            if not db_instance.get('ReadReplicaSourceDBInstanceIdentifier'):
+                if cluster_name := db_instance.get('DBClusterIdentifier'):
+                    clusters_set.add(cluster_name)
+                else:
+                    count += 1
+    count += len(clusters_set)
+    return count
+
+
 SERVICES_CONF: Dict[str, Any] = {
     "ec2": {
         "function": get_region_instances,
         "display_name": "Virtual Machines",
-        "workload_units": 1
+        "workload_units_ratio": 1
     },
     "lambda": {
         "function": get_region_functions,
         "display_name": "Serverless Functions",
-        "workload_units": 50
+        "workload_units_ratio": 1 / 50
     },
     "ecr": {
         "function": get_region_ecr_repos,
         "display_name": "Container Images",
-        "workload_units": 10
+        "workload_units_ratio": 1 / 10
     },
     "ami": {
         "function": get_region_vm_images,
         "display_name": "VM Images",
-        "workload_units": 1
+        "workload_units_ratio": 1
     },
     "ecs": {
         "function": get_region_serverless_containers,
         "display_name": "Serverless Containers",
-        "workload_units": 10
+        "workload_units_ratio": 1 / 10
     },
     "eks": {
         "function": get_region_cluster_nodes,
         "display_name": "Container Hosts",
-        "workload_units": 1
+        "workload_units_ratio": 1
+    },
+    "rds": {
+        "function": get_region_managed_dbs,
+        "display_name": "Managed Data Stores",
+        "workload_units_ratio": 2
     }
 }
 
@@ -235,14 +259,14 @@ def current_account_resources_count(session: boto3.Session) -> Dict[str, int]:
     return total_results
 
 
-def print_results(results: Dict[str, int], account_id: Optional[str]=None) -> None:
+def print_results(results: Dict[str, int], account_id: Optional[str] = None) -> None:
     log_total_results = account_id is None
     result_str = "\n==============\nTotal results:\n==============\n" if log_total_results else f"AWS Account number: [{account_id}]\n"
     total_workloads = 0
     for service, count in results.items():
         if service == "ecr":
             count = count * 1.1  # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
-        workloads = round(count / SERVICES_CONF[service]['workload_units'])
+        workloads = round(count * SERVICES_CONF[service]['workload_units_ratio'])
         if workloads == 0 and count > 0:
             workloads = 1
         result_str += f"{SERVICES_CONF[service]['display_name']} Count: {round(count)}{f' (Workload Units: {workloads})' if log_total_results else ''}\n"
@@ -308,6 +332,9 @@ def main():
 
     _parser.add_argument("--skip-container-hosts", action="store_true",
                          help=f"Skip counting {SERVICES_CONF['eks']['display_name']}")
+
+    _parser.add_argument("--skip-managed-data-sources", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['rds']['display_name']}")
 
     _parser.add_argument("--show-logs-per-account", action="store_true",
                          help=f"Log resource count per AWS account")
