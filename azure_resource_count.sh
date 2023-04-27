@@ -196,17 +196,18 @@ for subscription in $subscriptions; do
     # Get the number of Azure SQL Databases
     az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Managed Data Stores for subscription ${subscription}"
     servers=$(cat "${_temp_subscription_output}")
-    currentNodesCount=0
-    for cluster in $(echo "$servers" | jq -c '.[]'); do
-      server_name=$(echo $cluster | jq -r '.name')
-      rg_name=$(echo $cluster | jq -r '.resourceGroup')
+    currentDbInSub=0
+    for server in $(echo "$servers" | jq -c '.[]'); do
+      server_name=$(echo $server | jq -r '.name')
+      rg_name=$(echo $server | jq -r '.resourceGroup')
       az sql db list --subscription $subscription --resource-group $rg_name --server $server_name --query "[?name!='master'] | length(@)" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Managed Data Stores for subscription ${subscription}"
-      currentDBCount=$(cat "${_temp_subscription_output}")
-      if [ -n "$currentDBCount" ]; then
-          SqlDbCount=$((SqlDbCount + currentDBCount))
-          echo "Managed Data Stores Count: $currentDBCount"
-      fi
+      currentDbsPerServerCount=$(cat "${_temp_subscription_output}")
+      currentDbInSub=$((currentDbInSub + currentDbsPerServerCount))
     done
+    if [ -n "$currentDbInSub" ]; then
+        SqlDbCount=$((SqlDbCount + currentDbInSub))
+        echo "Managed Data Stores Count: $currentDbInSub"
+    fi
 
     #Increment counter
     counter=$((counter+1))

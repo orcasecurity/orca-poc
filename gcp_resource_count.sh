@@ -3,11 +3,12 @@ set -e
 
 LOG_FILE='gcp_resource_count.log'
 WORKLOAD_VM_UNITS=1
-WORKLOAD_FUNCTION_UNITS=50
-WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
+WORKLOAD_FUNCTION_UNITS=50 # (1 / 50)
+WORKLOAD_SERVERLESS_CONTAINER_UNITS=10 # (1 / 10)
 WORKLOAD_VM_IMAGE_UNITS=1
-WORKLOAD_CONTAINER_IMAGE_UNITS=10
+WORKLOAD_CONTAINER_IMAGE_UNITS=10 # (1 / 10)
 WORKLOAD_CONTAINER_HOST_UNITS=1
+WORKLOAD_DATABASE_UNITS=2
 
 
 _tmp_files=$(mktemp)
@@ -59,6 +60,7 @@ total_cloud_run=0
 total_container_images=0
 total_vm_images=0
 total_gke_nodes=0
+total_dbs=0
 counter=0
 _temp_project_output=$(_make_temp_file)
 for project in $PROJECTS; do
@@ -122,6 +124,13 @@ for project in $PROJECTS; do
       echo "Container Hosts Count: $project_nodes_count"
     fi
 
+    gcloud -q sql instances list --project "${project}" --filter='-masterInstanceName:* AND settings.activationPolicy!='NEVER' AND settings.backupConfiguration.enabled=true' --format=json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Managed Data Stores for project ${project}"
+    project_dbs_count=$(cat "${_temp_project_output}" | jq -r '. | length')
+    if [ -n "$project_dbs_count" ]; then
+      total_dbs=$((total_dbs + project_dbs_count))
+      echo "Managed Data Stores Count: $project_dbs_count"
+    fi
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$PROJECT_LEN" ]; then
@@ -159,7 +168,11 @@ container_host_workloads=$(( ( total_gke_nodes + WORKLOAD_CONTAINER_HOST_UNITS /
 if [[ $container_host_workloads -eq 0 && $total_gke_nodes -gt 0 ]]; then
     container_host_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads ))
+db_workloads=$(( total_dbs * WORKLOAD_DATABASE_UNITS ))
+if [[ $db_workloads -eq 0 && $total_dbs -gt 0 ]]; then
+    db_workloads=1
+fi
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + db_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -170,6 +183,7 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
+echo "Managed Data Stores Count: $total_dbs (Workload Units: ${db_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
