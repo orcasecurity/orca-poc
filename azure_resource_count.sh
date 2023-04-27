@@ -2,11 +2,12 @@
 
 LOG_FILE='azure_resource_count.log'
 WORKLOAD_VM_UNITS=1
-WORKLOAD_FUNCTION_UNITS=50
-WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
+WORKLOAD_FUNCTION_UNITS=50 # (1 / 50)
+WORKLOAD_SERVERLESS_CONTAINER_UNITS=10 # (1 / 10)
 WORKLOAD_VM_IMAGE_UNITS=1
-WORKLOAD_CONTAINER_IMAGE_UNITS=10
+WORKLOAD_CONTAINER_IMAGE_UNITS=10 # (1 / 10)
 WORKLOAD_CONTAINER_HOST_UNITS=1
+WORKLOAD_DATABASE_UNITS=2
 
 _tmp_files=$(mktemp)
 cleanup() {
@@ -85,6 +86,7 @@ ContainerCount=0
 containerImageCount=0
 vmImageCount=0
 aksNodesCount=0
+SqlDbCount=0
 
 # Set a counter for progress indicator
 counter=0
@@ -191,6 +193,21 @@ for subscription in $subscriptions; do
         aksNodesCount=$((aksNodesCount + currentNodesCount))
     fi
 
+    # Get the number of Azure SQL Databases
+    az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Managed Data Stores for subscription ${subscription}"
+    servers=$(cat "${_temp_subscription_output}")
+    currentNodesCount=0
+    for cluster in $(echo "$servers" | jq -c '.[]'); do
+      server_name=$(echo $cluster | jq -r '.name')
+      rg_name=$(echo $cluster | jq -r '.resourceGroup')
+      az sql db list --subscription $subscription --resource-group $rg_name --server $server_name --query "[?name!='master'] | length(@)" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Managed Data Stores for subscription ${subscription}"
+      currentDBCount=$(cat "${_temp_subscription_output}")
+      if [ -n "$currentDBCount" ]; then
+          SqlDbCount=$((SqlDbCount + currentDBCount))
+          echo "Managed Data Stores Count: $currentDBCount"
+      fi
+    done
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$management_group" ]; then
@@ -227,7 +244,11 @@ container_host_workloads=$(( ( aksNodesCount + WORKLOAD_CONTAINER_HOST_UNITS / 2
 if [[ $container_host_workloads -eq 0 && $aksNodesCount -gt 0 ]]; then
     container_host_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads ))
+databases_workloads=$(( SqlDbCount * WORKLOAD_DATABASE_UNITS ))
+if [[ $databases_workloads -eq 0 && $SqlDbCount -gt 0 ]]; then
+    databases_workloads=1
+fi
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + databases_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -238,6 +259,7 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
+echo "Managed Data Stores Count: $SqlDbCount (Workload Units: ${databases_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
