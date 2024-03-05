@@ -45,7 +45,7 @@ def log_enumeration_failure(service: str, session: CoveSession, error) -> None:
         account_id = session.session_information['Id']
     else:
         account_id = get_aws_account_id(session)
-    logger.error(f"Failed to count {service} for account: {account_id}, error: {error}")
+    logger.error(f"Failed to count {service} for account: {account_id}, error: {error} - test sonar cloud")
     global has_enumeration_errors
     has_enumeration_errors = True
 
