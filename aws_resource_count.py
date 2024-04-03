@@ -217,7 +217,6 @@ SERVICES_CONF: Dict[str, Any] = {
 ALL_REGIONS = [r["RegionName"] for r in boto3.client("ec2").describe_regions()["Regions"]]
 
 
-@cove(regions=ALL_REGIONS)
 def get_cove_region_resources(session: CoveSession) -> Dict[str, int]:
     results: Dict[str, int] = defaultdict(int)
     for service_name, conf in SERVICES_CONF.items():
@@ -291,6 +290,9 @@ def main():
     _parser.add_argument("--only-current-account", action="store_true",
                          help="Count resources only for the current account")
 
+    _parser.add_argument("--accounts-list", required=False,
+                         help="List of accounts IDS to count resources for, if OU is provided it will count its children accounts. use comma (,) as seperator")
+
     _parser.add_argument("--skip-vms", action="store_true",
                          help=f"Skip counting {SERVICES_CONF['ec2']['display_name']}")
 
@@ -320,14 +322,19 @@ def main():
     show_logs_per_account: bool = args.show_logs_per_account
     session = boto3.Session()
     total_results: Dict[str, int] = current_account_resources_count(session)
+    accounts_list: List[str] = args.accounts_list.strip().split(",") if args.accounts_list else []
     if args.only_current_account:
         if show_logs_per_account:
             print_results(total_results, account_id=get_aws_account_id(session=session))
         print_results(total_results)
     else:
         try:
-            logger.info("Start Counting resources for all the Organization's accounts...")
-            results_of_all_regions = get_cove_region_resources()
+            if not accounts_list:
+                logger.info("Start Counting resources for all the Organization's accounts...")
+                results_of_all_regions = cove(regions=ALL_REGIONS)(get_cove_region_resources)()
+            else:
+                logger.info(f"Start Counting resources for the following accounts: {accounts_list}...")
+                results_of_all_regions = cove(regions=ALL_REGIONS, target_ids=accounts_list)(get_cove_region_resources)()
             if show_logs_per_account:  # log current account results
                 print_results(total_results, account_id=get_aws_account_id(session=session))
             for result in results_of_all_regions["Results"]:
