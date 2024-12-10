@@ -206,8 +206,8 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
-echo "CloudSQL Databases Count (up to $((MAX_DB_SIZE / 1000)) TB): $total_sql_dbs (Workload Units: ${cloudsql_workloads})"
-echo "BigQuery Datasets Count: $total_bigquery_datasets (Workload Units: ${dataset_workloads})"
+echo "Managed Databases Count (up to $((MAX_DB_SIZE / 1000)) TB): $total_sql_dbs (Workload Units: ${cloudsql_workloads})"
+echo "DataWarehouses Count: $total_bigquery_datasets (Workload Units: ${dataset_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
