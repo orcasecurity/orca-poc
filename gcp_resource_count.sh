@@ -25,6 +25,7 @@ _make_temp_file() {
 }
 
 PROJECT_ID=""
+MAX_DB_SIZE=1100
 
 while [[ $# -gt 0 ]]
 do
@@ -32,6 +33,11 @@ do
     case $key in
         -p|--project)
         PROJECT_ID="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        -s|--max-db-size)
+        MAX_DB_SIZE="$2"
         shift # past argument
         shift # past value
         ;;
@@ -54,6 +60,7 @@ else
     echo "[+] counting resources for project ${PROJECT_ID}"
 fi
 echo
+echo "Max DB Size: ${MAX_DB_SIZE}GB"
 
 total_vms=0
 total_functions=0
@@ -128,7 +135,7 @@ for project in $PROJECTS; do
 
     # Fetch Cloud SQL databases
     gcloud -q sql instances list --project "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Cloud SQL DBs for project ${project}"
-    project_sql_db_count=$(cat "${_temp_project_output}" | jq -r '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= 1100)] | length')
+    project_sql_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size "$MAX_DB_SIZE" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size)] | length')
     if [ -n "$project_sql_db_count" ]; then
       total_sql_dbs=$((total_sql_dbs + project_sql_db_count))
       echo "Cloud SQL Databases Count: $project_sql_db_count"
@@ -199,7 +206,7 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
-echo "CloudSQL Databases Count: $total_sql_dbs (Workload Units: ${cloudsql_workloads})"
+echo "CloudSQL Databases Count (up to $((MAX_DB_SIZE / 1000)) TB): $total_sql_dbs (Workload Units: ${cloudsql_workloads})"
 echo "BigQuery Datasets Count: $total_bigquery_datasets (Workload Units: ${dataset_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
