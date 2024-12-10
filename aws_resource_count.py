@@ -181,6 +181,54 @@ def get_region_cluster_nodes(session: CoveSession, service_name: str, region_nam
     return count
 
 
+
+@retry
+def get_region_rds_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+    supported_db_engines = ["postgres", "mysql", "mongodb"]
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("rds", region_name=region_name)
+    paginator = client.get_paginator("describe_db_instances")
+    count = 0
+    clusters_set = set()
+    for page in paginator.paginate():
+        for db_instance in page["DBInstances"]:
+            db_engine = db_instance["Engine"]
+            db_engine_normalized = db_engine.replace("aurora-", "").replace("postgresql", "postgres")
+            if db_engine_normalized in supported_db_engines:
+                if not db_instance.get('ReadReplicaSourceDBInstanceIdentifier'):
+                    if cluster_name := db_instance.get('DBClusterIdentifier'):
+                        clusters_set.add(cluster_name)
+                    else:
+                        count += 1
+    count += len(clusters_set)
+    return count
+
+
+@retry
+def get_region_dynamodb_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("dynamodb", region_name=region_name)
+    paginator = client.get_paginator("list_tables")
+    count = 0
+    for page in paginator.paginate():
+        count += len(page["TableNames"])
+    return count
+
+
+@retry
+def get_region_redshift_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("redshift", region_name=region_name)
+    paginator = client.get_paginator("describe_clusters")
+    count = 0
+    for page in paginator.paginate():
+        count += len(page["Clusters"])
+    return count
+
+
 SERVICES_CONF: Dict[str, Any] = {
     "ec2": {
         "function": get_region_instances,
@@ -211,7 +259,22 @@ SERVICES_CONF: Dict[str, Any] = {
         "function": get_region_cluster_nodes,
         "display_name": "Container Hosts",
         "workload_units": 1
-    }
+    },
+    "rds": {
+        "function": get_region_rds_resources,
+        "display_name": "RDS Instances and Clusters",
+        "workload_units": 1
+    },
+    "dynamodb": {
+        "function": get_region_dynamodb_resources,
+        "display_name": "DynamoDB Tables",
+        "workload_units": 50
+    },
+    "redshift": {
+        "function": get_region_redshift_resources,
+        "display_name": "Redshift Clusters",
+        "workload_units": 50
+    },
 }
 
 ALL_REGIONS = [r["RegionName"] for r in boto3.client("ec2").describe_regions()["Regions"]]
@@ -281,6 +344,15 @@ def set_skip_resources(args: argparse.Namespace) -> None:
     if args.skip_container_hosts:
         skipped_resources.append(SERVICES_CONF["eks"]['display_name'])
         SERVICES_CONF.pop("eks")
+    if args.skip_rds:
+        skipped_resources.append(SERVICES_CONF["rds"]['display_name'])
+        SERVICES_CONF.pop("rds")
+    if args.skip_dynamodb:
+        skipped_resources.append(SERVICES_CONF["dynamodb"]['display_name'])
+        SERVICES_CONF.pop("dynamodb")
+    if args.skip_redshift:
+        skipped_resources.append(SERVICES_CONF["redshift"]['display_name'])
+        SERVICES_CONF.pop("redshift")
     if skipped_resources:
         logger.info(f"Skip counting the following resources: {', '.join(skipped_resources)}.")
 
@@ -310,6 +382,15 @@ def main():
 
     _parser.add_argument("--skip-container-hosts", action="store_true",
                          help=f"Skip counting {SERVICES_CONF['eks']['display_name']}")
+
+    _parser.add_argument("--skip-rds", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['rds']['display_name']}")
+
+    _parser.add_argument("--skip-dynamodb", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['dynamodb']['display_name']}")
+
+    _parser.add_argument("--skip-redshift", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['redshift']['display_name']}")
 
     _parser.add_argument("--show-logs-per-account", action="store_true",
                          help=f"Log resource count per AWS account")
