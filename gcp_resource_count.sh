@@ -25,7 +25,7 @@ _make_temp_file() {
 }
 
 PROJECT_ID=""
-MAX_DB_SIZE_GB=1100
+MAX_DB_SIZE_GB=1024
 
 while [[ $# -gt 0 ]]
 do
