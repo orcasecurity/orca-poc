@@ -25,7 +25,7 @@ _make_temp_file() {
 }
 
 PROJECT_ID=""
-MAX_DB_SIZE=1100
+MAX_DB_SIZE_GB=1100
 
 while [[ $# -gt 0 ]]
 do
@@ -36,8 +36,8 @@ do
         shift # past argument
         shift # past value
         ;;
-        -s|--max-db-size)
-        MAX_DB_SIZE="$2"
+        -s|--max-db-size-gb)
+        MAX_DB_SIZE_GB="$2"
         shift # past argument
         shift # past value
         ;;
@@ -60,7 +60,7 @@ else
     echo "[+] counting resources for project ${PROJECT_ID}"
 fi
 echo
-echo "Max DB Size: ${MAX_DB_SIZE}GB"
+echo "Max DB Size: ${MAX_DB_SIZE_GB}GB"
 
 total_vms=0
 total_functions=0
@@ -135,7 +135,7 @@ for project in $PROJECTS; do
 
     # Fetch Cloud SQL databases
     gcloud -q sql instances list --project "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Cloud SQL DBs for project ${project}"
-    project_managed_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size "$MAX_DB_SIZE" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size)] | length')
+    project_managed_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size_gb "$MAX_DB_SIZE_GB" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size_gb)] | length')
     if [ -n "$project_managed_db_count" ]; then
       total_managed_dbs=$((total_managed_dbs + project_managed_db_count))
       echo "Managed Databases Count: $project_managed_db_count"
@@ -206,7 +206,7 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
-echo "Managed Databases Count (up to $((MAX_DB_SIZE / 1024)) TB): $total_managed_dbs (Workload Units: ${managed_db_workloads})"
+echo "Managed Databases Count (up to $((MAX_DB_SIZE_GB / 1024)) TB): $total_managed_dbs (Workload Units: ${managed_db_workloads})"
 echo "DataWarehouses Count: $total_datawarehouses_datasets (Workload Units: ${datawarehouse_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
