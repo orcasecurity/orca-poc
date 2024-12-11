@@ -8,8 +8,8 @@ WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
 WORKLOAD_VM_IMAGE_UNITS=1
 WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
-WORKLOAD_CLOUDSQL_UNITS=1
-WORKLOAD_DATASET_UNITS=1
+WORKLOAD_MANAGED_DB_UNITS=1
+WORKLOAD_DATAWAREHOUSE_UNITS=4
 
 
 _tmp_files=$(mktemp)
@@ -68,8 +68,8 @@ total_cloud_run=0
 total_container_images=0
 total_vm_images=0
 total_gke_nodes=0
-total_sql_dbs=0
-total_bigquery_datasets=0
+total_managed_dbs=0
+total_datawarehouses_datasets=0
 counter=0
 _temp_project_output=$(_make_temp_file)
 for project in $PROJECTS; do
@@ -135,18 +135,18 @@ for project in $PROJECTS; do
 
     # Fetch Cloud SQL databases
     gcloud -q sql instances list --project "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Cloud SQL DBs for project ${project}"
-    project_sql_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size "$MAX_DB_SIZE" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size)] | length')
-    if [ -n "$project_sql_db_count" ]; then
-      total_sql_dbs=$((total_sql_dbs + project_sql_db_count))
-      echo "Cloud SQL Databases Count: $project_sql_db_count"
+    project_managed_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size "$MAX_DB_SIZE" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size)] | length')
+    if [ -n "$project_managed_db_count" ]; then
+      total_managed_dbs=$((total_managed_dbs + project_managed_db_count))
+      echo "Managed Databases Count: $project_managed_db_count"
     fi
 
     # Fetch BigQuery datasets
     bq -q ls --project_id "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get BigQuery Datasets for project ${project}"
-    project_bigquery_dataset_count=$(cat "${_temp_project_output}" | jq -r '. | length')
-    if [ -n "$project_bigquery_dataset_count" ]; then
-      total_bigquery_datasets=$((total_bigquery_datasets + project_bigquery_dataset_count))
-      echo "BigQuery Datasets Count: $project_bigquery_dataset_count"
+    project_datadatawarehouse_count=$(cat "${_temp_project_output}" | jq -r '. | length')
+    if [ -n "$project_datadatawarehouse_count" ]; then
+      total_datawarehouses_datasets=$((total_datawarehouses_datasets + project_datadatawarehouse_count))
+      echo "DataWarehouses Count: $project_datadatawarehouse_count"
     fi
 
 
@@ -187,15 +187,15 @@ container_host_workloads=$(( ( total_gke_nodes + WORKLOAD_CONTAINER_HOST_UNITS /
 if [[ $container_host_workloads -eq 0 && $total_gke_nodes -gt 0 ]]; then
     container_host_workloads=1
 fi
-cloudsql_workloads=$(( ( total_sql_dbs + WORKLOAD_CLOUDSQL_UNITS / 2 ) / WORKLOAD_CLOUDSQL_UNITS ))
-if [[ $cloudsql_workloads -eq 0 && total_sql_dbs -gt 0 ]]; then
-    cloudsql_workloads=1
+managed_db_workloads=$(( ( total_managed_dbs + WORKLOAD_MANAGED_DB_UNITS / 2 ) / WORKLOAD_MANAGED_DB_UNITS ))
+if [[ managed_db_workloads -eq 0 && total_managed_dbs -gt 0 ]]; then
+    managed_db_workloads=1
 fi
-dataset_workloads=$(( ( total_bigquery_datasets + WORKLOAD_DATASET_UNITS / 2 ) / WORKLOAD_DATASET_UNITS ))
-if [[ $dataset_workloads -eq 0 && $total_bigquery_datasets -gt 0 ]]; then
-    dataset_workloads=1
+datawarehouse_workloads=$(( ( total_datawarehouses_datasets + WORKLOAD_DATAWAREHOUSE_UNITS / 2 ) / WORKLOAD_DATAWAREHOUSE_UNITS ))
+if [[ $datawarehouse_workloads -eq 0 && $total_datawarehouses_datasets -gt 0 ]]; then
+    datawarehouse_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + cloudsql_workloads + dataset_workloads ))
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + managed_db_workloads + datawarehouse_workloads ))
 
 echo "=============="
 echo "Total results:"
@@ -206,8 +206,8 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
-echo "Managed Databases Count (up to $((MAX_DB_SIZE / 1000)) TB): $total_sql_dbs (Workload Units: ${cloudsql_workloads})"
-echo "DataWarehouses Count: $total_bigquery_datasets (Workload Units: ${dataset_workloads})"
+echo "Managed Databases Count (up to $((MAX_DB_SIZE / 1024)) TB): $total_managed_dbs (Workload Units: ${managed_db_workloads})"
+echo "DataWarehouses Count: $total_datawarehouses_datasets (Workload Units: ${datawarehouse_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
