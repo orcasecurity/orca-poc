@@ -59,7 +59,10 @@ total_cloud_run=0
 total_container_images=0
 total_vm_images=0
 total_gke_nodes=0
+total_buckets=0
+total_private_buckets=0
 counter=0
+
 _temp_project_output=$(_make_temp_file)
 for project in $PROJECTS; do
     echo "Processing Project: $project"
@@ -122,6 +125,25 @@ for project in $PROJECTS; do
       echo "Container Hosts Count: $project_nodes_count"
     fi
 
+  buckets=$(gcloud storage buckets list --project "${project}" --format "json(storage_url, public_access_prevention)")
+  total_project_buckets=$(echo "$buckets" | jq -r '. | length')
+  total_buckets=$((total_buckets + total_project_buckets))
+
+  is_public_acces_pervention_enabled_from_org_level=$(gcloud resource-manager org-policies describe storage.publicAccessPrevention --project="${project}" --effective --format json |  jq '.booleanPolicy.enforced == true')
+  if [[ $is_public_acces_pervention_enabled_from_org_level == "true" ]]; then
+      total_private_buckets=total_project_buckets
+  else
+     for bucket in $(echo "$buckets" | jq -c '.[]') ; do
+        storage_url=$(echo "$bucket" | jq -r '.storage_url')
+        public_access_prevention_bucket_level=$(echo "$bucket" | jq -r '.public_access_prevention == "enforced"')
+        [[ $public_access_prevention_bucket_level == "true" ]] && total_private_buckets=$((total_private_buckets + 1)) && continue
+
+        is_permit_public_access_by_policy=$(gcloud storage buckets get-iam-policy "$storage_url" --format=json | grep -qE '"allUsers"|"allAuthenticatedUsers"' && echo "true" || echo "false")
+        [[ $is_permit_public_access_by_policy == "false" ]] && total_private_buckets=$((total_private_buckets + 1)) && continue
+
+    done
+  fi
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$PROJECT_LEN" ]; then
@@ -170,6 +192,9 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
+echo "Private Buckets: $total_private_buckets"
+echo "Public Buckets: $((total_buckets - total_private_buckets))"
+echo "Buckets Count: $total_buckets"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
