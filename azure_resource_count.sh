@@ -123,75 +123,75 @@ for subscription in $subscriptions; do
     # Show the current subscription being processed
     echo "Processing Subscription: $subscription"
 
-#    az vm list --subscription $subscription --query "length([])" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Virtual Machines for subscription ${subscription}"
-#    currentVmCount=$(cat "${_temp_subscription_output}")
-#    if [ -n "$currentVmCount" ]; then
-#        vmCount=$((vmCount + currentVmCount))
-#        echo "Virtual Machines Count: $currentVmCount"
-#    fi
-#
-#    # Get the number of Function Apps
-#    az functionapp list --subscription $subscription --query "length([])" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Functions for subscription ${subscription}"
-#    currentFunctionAppCount=$(cat "${_temp_subscription_output}")
-#    if [ -n "$currentFunctionAppCount" ]; then
-#        functionAppCount=$((functionAppCount + currentFunctionAppCount))
-#        echo "Serverless Functions Count: $currentFunctionAppCount"
-#    fi
-#
-#    # Get the number of ACI
-#    az container list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Containers for subscription ${subscription}"
-#    container_groups=$(cat "${_temp_subscription_output}")
-#    currentContainerCount=0
-#    for group in $(echo "$container_groups" | jq -c '.[]'); do
-#      group_name=$(echo $group | jq -r '.name')
-#      rg_name=$(echo $group | jq -r '.resourceGroup')
-#      az container show --subscription $subscription -n $group_name -g $rg_name --query 'length(containers)' -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Containers for subscription ${subscription}"
-#      currentContainerCount=$((currentContainerCount + $(cat "${_temp_subscription_output}")))
-#    done
-#    if [ -n "$currentContainerCount" ]; then
-#        echo "Serverless Containers Count: $currentContainerCount"
-#        ContainerCount=$((ContainerCount + currentContainerCount))
-#    fi
-#
-#    # Get the number of container repositories
-#    az acr list --subscription $subscription --query "[].name" --output tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Images for subscription ${subscription}"
-#    acrList=$(cat "${_temp_subscription_output}")
-#    currentAcrCount=0
-#    for acrName in $acrList; do
-#        az acr repository list --subscription $subscription --name $acrName --output tsv | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Images for subscription ${subscription}"
-#        acrList=$(cat "${_temp_subscription_output}")
-#        currentAcrCount=$((currentAcrCount + $(cat "${_temp_subscription_output}")))
-#    done
-#    if [ -n "$currentAcrCount" ]; then
-#        currentAcrCount=$(echo "$currentAcrCount*1.1" | awk '{printf "%.0f", $0}') # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
-#        echo "Container Images Count: $currentAcrCount"
-#        containerImageCount=$((containerImageCount + currentAcrCount))
-#    fi
-#
-#    # Get the number of VM images
-#    az image list --subscription $subscription --query "length([])" --only-show-errors -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get VM images for subscription ${subscription}"
-#    currentVmImageCount=$(cat "${_temp_subscription_output}")
-#    if [ -n "$currentVmImageCount" ]; then
-#        echo "VM images Count: $currentVmImageCount"
-#        vmImageCount=$((vmImageCount + currentVmImageCount))
-#    fi
-#
-#    # Get the number of AKS nodes
-#    az aks list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
-#    clusters=$(cat "${_temp_subscription_output}")
-#    currentNodesCount=0
-#    for cluster in $(echo "$clusters" | jq -c '.[]'); do
-#      cluster_name=$(echo $cluster | jq -r '.name')
-#      rg_name=$(echo $cluster | jq -r '.resourceGroup')
-#      az aks show --subscription $subscription --resource-group $rg_name --name $cluster_name --query "agentPoolProfiles[].count" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
-#      for nodes in $(cat "${_temp_subscription_output}"); do
-#        currentNodesCount=$((currentNodesCount + nodes))
-#      done
-#    done
-#    if [ -n "$currentNodesCount" ]; then
-#        echo "Container Hosts Count: $currentNodesCount"
-#        aksNodesCount=$((aksNodesCount + currentNodesCount))
-#    fi
+    az vm list --subscription $subscription --query "length([])" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Virtual Machines for subscription ${subscription}"
+    currentVmCount=$(cat "${_temp_subscription_output}")
+    if [ -n "$currentVmCount" ]; then
+        vmCount=$((vmCount + currentVmCount))
+        echo "Virtual Machines Count: $currentVmCount"
+    fi
+
+    # Get the number of Function Apps
+    az functionapp list --subscription $subscription --query "length([])" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Functions for subscription ${subscription}"
+    currentFunctionAppCount=$(cat "${_temp_subscription_output}")
+    if [ -n "$currentFunctionAppCount" ]; then
+        functionAppCount=$((functionAppCount + currentFunctionAppCount))
+        echo "Serverless Functions Count: $currentFunctionAppCount"
+    fi
+
+    # Get the number of ACI
+    az container list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Containers for subscription ${subscription}"
+    container_groups=$(cat "${_temp_subscription_output}")
+    currentContainerCount=0
+    for group in $(echo "$container_groups" | jq -c '.[]'); do
+      group_name=$(echo $group | jq -r '.name')
+      rg_name=$(echo $group | jq -r '.resourceGroup')
+      az container show --subscription $subscription -n $group_name -g $rg_name --query 'length(containers)' -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Serverless Containers for subscription ${subscription}"
+      currentContainerCount=$((currentContainerCount + $(cat "${_temp_subscription_output}")))
+    done
+    if [ -n "$currentContainerCount" ]; then
+        echo "Serverless Containers Count: $currentContainerCount"
+        ContainerCount=$((ContainerCount + currentContainerCount))
+    fi
+
+    # Get the number of container repositories
+    az acr list --subscription $subscription --query "[].name" --output tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Images for subscription ${subscription}"
+    acrList=$(cat "${_temp_subscription_output}")
+    currentAcrCount=0
+    for acrName in $acrList; do
+        az acr repository list --subscription $subscription --name $acrName --output tsv | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Images for subscription ${subscription}"
+        acrList=$(cat "${_temp_subscription_output}")
+        currentAcrCount=$((currentAcrCount + $(cat "${_temp_subscription_output}")))
+    done
+    if [ -n "$currentAcrCount" ]; then
+        currentAcrCount=$(echo "$currentAcrCount*1.1" | awk '{printf "%.0f", $0}') # we scan 2 images per one repository and we decided to multiply the count by 1.1 based on production statistics
+        echo "Container Images Count: $currentAcrCount"
+        containerImageCount=$((containerImageCount + currentAcrCount))
+    fi
+
+    # Get the number of VM images
+    az image list --subscription $subscription --query "length([])" --only-show-errors -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get VM images for subscription ${subscription}"
+    currentVmImageCount=$(cat "${_temp_subscription_output}")
+    if [ -n "$currentVmImageCount" ]; then
+        echo "VM images Count: $currentVmImageCount"
+        vmImageCount=$((vmImageCount + currentVmImageCount))
+    fi
+
+    # Get the number of AKS nodes
+    az aks list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
+    clusters=$(cat "${_temp_subscription_output}")
+    currentNodesCount=0
+    for cluster in $(echo "$clusters" | jq -c '.[]'); do
+      cluster_name=$(echo $cluster | jq -r '.name')
+      rg_name=$(echo $cluster | jq -r '.resourceGroup')
+      az aks show --subscription $subscription --resource-group $rg_name --name $cluster_name --query "agentPoolProfiles[].count" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Container Hosts for subscription ${subscription}"
+      for nodes in $(cat "${_temp_subscription_output}"); do
+        currentNodesCount=$((currentNodesCount + nodes))
+      done
+    done
+    if [ -n "$currentNodesCount" ]; then
+        echo "Container Hosts Count: $currentNodesCount"
+        aksNodesCount=$((aksNodesCount + currentNodesCount))
+    fi
     # get azure sql databases
     az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
     servers=$(cat "${_temp_subscription_output}")
