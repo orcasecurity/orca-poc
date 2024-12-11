@@ -1,7 +1,7 @@
 #!/bin/bash
 
 LOG_FILE='azure_resource_count.log'
-DB_SIZE_THRESHOLD_IN_GB=1000
+MAX_DB_SIZE_GB=1024
 WORKLOAD_VM_UNITS=1
 WORKLOAD_FUNCTION_UNITS=50
 WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
@@ -50,6 +50,13 @@ while [ "$1" != "" ]; do
                                   exit 1
                                 fi
                                 management_group=$1
+                                ;;
+        -mds | --max-db-size-gb ) shift
+                                if [ "$1" == "" ]; then
+                                  echo "Error: The --max-db-size-gb (-s) flag requires a value."
+                                  exit 1
+                                fi
+                                MAX_DB_SIZE_GB=$1
                                 ;;
         * )                     echo "Error: Unknown input flag $1"
                                 exit 1
@@ -196,7 +203,7 @@ for subscription in $subscriptions; do
     az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
     servers=$(cat "${_temp_subscription_output}")
     currentAzureDbCount=0
-    db_size_threshold_in_bytes=$((DB_SIZE_THRESHOLD_IN_GB * 1000 * 1000 * 1000))
+    db_size_threshold_in_bytes=$((MAX_DB_SIZE_GB * 1000 * 1000 * 1000))
     for server in $(echo "$servers" | jq -c '.[]'); do
       server_name=$(echo $server | jq -r '.name')
       rg_name=$(echo $server | jq -r '.resourceGroup')
@@ -212,7 +219,7 @@ for subscription in $subscriptions; do
       done
     done
     if [ -n "$currentAzureDbCount" ]; then
-        echo "Managed DBs (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): $currentAzureDbCount"
+        echo "Managed Databases (up to ${MAX_DB_SIZE_GB} GB): $currentAzureDbCount"
         dbCount=$((dbCount + currentAzureDbCount))
     fi
     #Increment counter
@@ -268,7 +275,7 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
-echo "Managed DBs Hosts Count: (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): ${db_host_workloads}"
+echo "Managed Databases Hosts Count: (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): ${db_host_workloads}"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
