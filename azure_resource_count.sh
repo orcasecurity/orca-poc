@@ -7,6 +7,8 @@ WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
 WORKLOAD_VM_IMAGE_UNITS=1
 WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
+WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS=10
+WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS=10
 
 _tmp_files=$(mktemp)
 cleanup() {
@@ -85,6 +87,8 @@ ContainerCount=0
 containerImageCount=0
 vmImageCount=0
 aksNodesCount=0
+privateStorageContainersCount=0
+publicStorageContainersCount=0
 
 # Set a counter for progress indicator
 counter=0
@@ -191,6 +195,37 @@ for subscription in $subscriptions; do
         aksNodesCount=$((aksNodesCount + currentNodesCount))
     fi
 
+    # Get the number of public and private buckets
+    az storage account list --subscription $subscription --query "[].{name: name, allowBlobPublicAccess: allowBlobPublicAccess}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Storage Accounts for subscription ${subscription}"
+    storageAccountList=$(cat "${_temp_subscription_output}")
+    currentPrivateContainersCount=0
+    currentPublicContainersCount=0
+    for storageAccount in $(echo "$storageAccountList" | jq -c '.[]'); do
+        storageAccountName=$(echo $storageAccount | jq -r '.name')
+        allowBlobPublicAccess=$(echo $storageAccount | jq -r '.allowBlobPublicAccess')
+
+        az storage container list --subscription $subscription --account-name $storageAccountName --auth-mode login --query "[].{name: name, publicAccess: properties.publicAccess}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Storage Containers for subscription ${subscription}"
+
+        containerList=$(cat "${_temp_subscription_output}")
+        for container in $(echo "$containerList" | jq -c '.[]'); do
+            containerName=$(echo $container | jq -r '.name')
+            containerPublicAccess=$(echo $container | jq -r '.publicAccess')
+            if [[ ("$allowBlobPublicAccess" == "true" && "$containerPublicAccess" != "null") || "$containerName" == "\$web" ]]; then
+                let currentPublicContainersCount++
+            else
+                let currentPrivateContainersCount++
+            fi
+        done
+    done
+    if [ -n "$currentPublicContainersCount" ]; then
+        echo "Public Storage Account Containers Count: $currentPublicContainersCount"
+        publicStorageContainersCount=$((publicStorageContainersCount + $currentPublicContainersCount))
+    fi
+    if [ -n "$currentPrivateContainersCount" ]; then
+        echo "Private Storage Account Containers Count: $currentPrivateContainersCount"
+        privateStorageContainersCount=$((privateStorageContainersCount + $currentPrivateContainersCount))
+    fi
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$management_group" ]; then
@@ -227,7 +262,16 @@ container_host_workloads=$(( ( aksNodesCount + WORKLOAD_CONTAINER_HOST_UNITS / 2
 if [[ $container_host_workloads -eq 0 && $aksNodesCount -gt 0 ]]; then
     container_host_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads ))
+public_storage_container_workloads=$(( ( publicStorageContainersCount + WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS / 2 ) / WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS ))
+if [[ $public_storage_container_workloads -eq 0 && $publicStorageContainersCount -gt 0 ]]; then
+    public_storage_container_workloads=1
+fi
+private_storage_container_workloads=$(( ( privateStorageContainersCount + WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS / 2 ) / WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS ))
+if [[ $private_storage_container_workloads -eq 0 && $privateStorageContainersCount -gt 0 ]]; then
+    private_storage_container_workloads=1
+fi
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + \
+vm_image_workloads + container_host_workloads + public_storage_container_workloads + private_storage_container_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -238,6 +282,8 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
+echo "Public Storage Account Containers Count: $publicStorageContainersCount (Workload Units: ${public_storage_container_workloads})"
+echo "Private Storage Account Containers Count: $privateStorageContainersCount (Workload Units: ${private_storage_container_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
