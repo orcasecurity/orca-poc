@@ -279,10 +279,9 @@ private_storage_container_workloads=$(( ( privateStorageContainersCount + WORKLO
 if [[ $private_storage_container_workloads -eq 0 && $privateStorageContainersCount -gt 0 ]]; then
     private_storage_container_workloads=1
 fi
-data_disk_workloads=$(awk "BEGIN {print int(($dataDisksCount + $WORKLOAD_DATA_DISK_UNITS / 2) / $WORKLOAD_DATA_DISK_UNITS)}")
-if [[ $data_disk_workloads -eq 0 && $dataDisksCount -gt 0 ]]; then
-    data_disk_workloads=1
-fi
+data_disk_workloads=$(awk "BEGIN {print $dataDisksCount / $WORKLOAD_DATA_DISK_UNITS}")
+data_disk_workloads=$(awk "BEGIN {print ($data_disk_workloads) == int($data_disk_workloads) ? ($data_disk_workloads) : int($data_disk_workloads) + 1}")
+
 total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + \
 container_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
 
