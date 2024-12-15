@@ -228,7 +228,9 @@ for subscription in $subscriptions; do
     fi
 
     # Get the number of data (non-os) disks
-    az disk list --subscription $subscription --query "[?managedBy != null && osType == null]" -o tsv | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get data disks for subscription ${subscription}"
+    az vm list --query "[].storageProfile.dataDisks"  --subscription $subscription \
+    | jq -r '.[][] | select(.diskSizeGb <= 1024) | .diskSizeGb' \| wc -l > ${_temp_subscription_output} 2>> $LOG_FILE \
+    ||  echo "Failed to get data disks for subscription ${subscription}"
     currentDataDisksCount=$(cat "${_temp_subscription_output}")
     if [ -n "$currentDataDisksCount" ]; then
         echo "Data Disks Count: $currentDataDisksCount"
