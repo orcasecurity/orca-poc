@@ -9,6 +9,7 @@ WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
 WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS=10
 WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS=10
+WORKLOAD_DATA_DISK_UNITS=2.5
 
 _tmp_files=$(mktemp)
 cleanup() {
@@ -226,6 +227,14 @@ for subscription in $subscriptions; do
         privateStorageContainersCount=$((privateStorageContainersCount + $currentPrivateContainersCount))
     fi
 
+    # Get the number of data (non-os) disks
+    az disk list --subscription $subscription --query "[?managedBy != null && osType == null]" -o tsv | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get data disks for subscription ${subscription}"
+    currentDataDisksCount=$(cat "${_temp_subscription_output}")
+    if [ -n "$currentDataDisksCount" ]; then
+        echo "Data Disks Count: $currentDataDisksCount"
+        dataDisksCount=$((dataDisksCount + $currentDataDisksCount))
+    fi
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$management_group" ]; then
@@ -270,8 +279,12 @@ private_storage_container_workloads=$(( ( privateStorageContainersCount + WORKLO
 if [[ $private_storage_container_workloads -eq 0 && $privateStorageContainersCount -gt 0 ]]; then
     private_storage_container_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + \
-vm_image_workloads + container_host_workloads + public_storage_container_workloads + private_storage_container_workloads))
+data_disk_workloads=$(awk "BEGIN {print int(($dataDisksCount + $WORKLOAD_DATA_DISK_UNITS / 2) / $WORKLOAD_DATA_DISK_UNITS)}")
+if [[ $data_disk_workloads -eq 0 && $dataDisksCount -gt 0 ]]; then
+    data_disk_workloads=1
+fi
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + \
+container_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -284,6 +297,7 @@ echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
 echo "Public Storage Account Containers Count: $publicStorageContainersCount (Workload Units: ${public_storage_container_workloads})"
 echo "Private Storage Account Containers Count: $privateStorageContainersCount (Workload Units: ${private_storage_container_workloads})"
+echo "Data Disks Count: $dataDisksCount (Workload Units: ${data_disk_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
