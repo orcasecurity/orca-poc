@@ -24,6 +24,8 @@ logger.setLevel(logging.INFO)
 
 has_enumeration_errors: bool = False
 
+MAX_DB_SIZE_GB=1024
+
 
 @dataclass
 class VmImage:
@@ -70,7 +72,7 @@ def retry(func):
 
 
 @retry
-def get_region_serverless_containers(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_serverless_containers(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("ecs", region_name=region_name)
@@ -87,7 +89,7 @@ def get_region_serverless_containers(session: CoveSession, service_name: str, re
 
 
 @retry
-def get_region_instances(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_instances(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("ec2", region_name=region_name)
@@ -100,7 +102,7 @@ def get_region_instances(session: CoveSession, service_name: str, region_name: O
 
 
 @retry
-def get_region_functions(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_functions(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("lambda", region_name=region_name)
@@ -112,7 +114,7 @@ def get_region_functions(session: CoveSession, service_name: str, region_name: O
 
 
 @retry
-def get_region_ecr_repos(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_ecr_repos(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("ecr", region_name=region_name)
@@ -147,7 +149,7 @@ def is_image_used(vm_image: VmImage, client: boto3.client) -> bool:
 
 
 @retry
-def get_region_vm_images(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_vm_images(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     client = session.client("ec2", region_name=region_name)
@@ -161,7 +163,7 @@ def get_region_vm_images(session: CoveSession, service_name: str, region_name: O
 
 
 @retry
-def get_region_cluster_nodes(session: CoveSession, service_name: str, region_name: Optional[str] = None) -> int:
+def get_region_cluster_nodes(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
     if hasattr(session, "session_information"):
         region_name = session.session_information['Region']
     eks_client = session.client("eks", region_name=region_name)
@@ -178,6 +180,56 @@ def get_region_cluster_nodes(session: CoveSession, service_name: str, region_nam
             for page in instance_paginator.paginate(Filters=_filter):
                 for sub_list in page["Reservations"]:
                     count += len(sub_list.get("Instances", []))
+    return count
+
+
+
+@retry
+def get_region_rds_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
+    supported_db_engines = ["postgres", "mysql", "mongodb"]
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("rds", region_name=region_name)
+    paginator = client.get_paginator("describe_db_instances")
+    count = 0
+    clusters_set = set()
+    max_db_size_gb = int(args.max_db_size_gb) if args.max_db_size_gb else MAX_DB_SIZE_GB
+    for page in paginator.paginate():
+        for db_instance in page["DBInstances"]:
+            db_engine = db_instance["Engine"]
+            db_size = int(db_instance.get("AllocatedStorage", 0))
+            db_engine_normalized = db_engine.replace("aurora-", "").replace("postgresql", "postgres")
+            if db_engine_normalized in supported_db_engines and db_size <= max_db_size_gb:
+                if not db_instance.get('ReadReplicaSourceDBInstanceIdentifier'):
+                    if cluster_name := db_instance.get('DBClusterIdentifier'):
+                        clusters_set.add(cluster_name)
+                    else:
+                        count += 1
+    count += len(clusters_set)
+    return count
+
+
+@retry
+def get_region_dynamodb_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("dynamodb", region_name=region_name)
+    paginator = client.get_paginator("list_tables")
+    count = 0
+    for page in paginator.paginate():
+        count += len(page["TableNames"])
+    return count
+
+
+@retry
+def get_region_redshift_resources(session: CoveSession, service_name: str, region_name: Optional[str] = None, args: Optional[argparse.Namespace] = None) -> int:
+    if hasattr(session, "session_information"):
+        region_name = session.session_information['Region']
+    client = session.client("redshift", region_name=region_name)
+    paginator = client.get_paginator("describe_clusters")
+    count = 0
+    for page in paginator.paginate():
+        count += len(page["Clusters"])
     return count
 
 
@@ -211,7 +263,22 @@ SERVICES_CONF: Dict[str, Any] = {
         "function": get_region_cluster_nodes,
         "display_name": "Container Hosts",
         "workload_units": 1
-    }
+    },
+    "rds": {
+        "function": get_region_rds_resources,
+        "display_name": "Managed Databases - RDS",
+        "workload_units": 1
+    },
+    "ddb": {
+        "function": get_region_dynamodb_resources,
+        "display_name": "Data Warehouses - DynamoDB",
+        "workload_units": 4
+    },
+    "redshift": {
+        "function": get_region_redshift_resources,
+        "display_name": "Data Warehouses - Redshift",
+        "workload_units": 50
+    },
 }
 
 ALL_REGIONS = [r["RegionName"] for r in boto3.client("ec2").describe_regions()["Regions"]]
@@ -224,13 +291,13 @@ def get_cove_region_resources(session: CoveSession) -> Dict[str, int]:
     return results
 
 
-def current_account_resources_count(session: boto3.Session) -> Dict[str, int]:
+def current_account_resources_count(session: boto3.Session, args: argparse.Namespace) -> Dict[str, int]:
     logger.info(f"Counting resources for the current account...")
     total_results: Dict[str, int] = defaultdict(int)
     for i, region in enumerate(ALL_REGIONS):
         logger.info(f"Region: {region} ({i + 1}/{len(ALL_REGIONS)})")
         for service_name, conf in SERVICES_CONF.items():
-            total_results[service_name] += conf["function"](session, service_name, region)
+            total_results[service_name] += conf["function"](session, service_name, region, args)
     return total_results
 
 
@@ -281,6 +348,14 @@ def set_skip_resources(args: argparse.Namespace) -> None:
     if args.skip_container_hosts:
         skipped_resources.append(SERVICES_CONF["eks"]['display_name'])
         SERVICES_CONF.pop("eks")
+    if args.skip_managed_dbs:
+        skipped_resources.append(SERVICES_CONF["rds"]['display_name'])
+        SERVICES_CONF.pop("rds")
+    if args.skip_data_warehouses:
+        skipped_resources.append(SERVICES_CONF["ddb"]['display_name'])
+        SERVICES_CONF.pop("ddb")
+        skipped_resources.append(SERVICES_CONF["redshift"]['display_name'])
+        SERVICES_CONF.pop("redshift")
     if skipped_resources:
         logger.info(f"Skip counting the following resources: {', '.join(skipped_resources)}.")
 
@@ -311,8 +386,16 @@ def main():
     _parser.add_argument("--skip-container-hosts", action="store_true",
                          help=f"Skip counting {SERVICES_CONF['eks']['display_name']}")
 
+    _parser.add_argument("--skip-managed-dbs", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['rds']['display_name']}")
+
+    _parser.add_argument("--skip-data-warehouses", action="store_true",
+                         help=f"Skip counting {SERVICES_CONF['ddb']['display_name']} and {SERVICES_CONF['redshift']['display_name']}")
+
     _parser.add_argument("--show-logs-per-account", action="store_true",
                          help=f"Log resource count per AWS account")
+
+    _parser.add_argument("--max-db-size-gb", help=f"List managed DBs up to a certain size", required=False)
 
     args = _parser.parse_args()
     set_skip_resources(args)
@@ -321,7 +404,7 @@ def main():
         return
     show_logs_per_account: bool = args.show_logs_per_account
     session = boto3.Session()
-    total_results: Dict[str, int] = current_account_resources_count(session)
+    total_results: Dict[str, int] = current_account_resources_count(session, args)
     accounts_list: List[str] = args.accounts_list.strip().split(",") if args.accounts_list else []
     if args.only_current_account:
         if show_logs_per_account:
