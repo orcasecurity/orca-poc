@@ -339,7 +339,7 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
-echo "Managed Databases Hosts Count: (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): ${db_host_workloads}"
+echo "Managed Databases Hosts Count: (up to ${MAX_DB_SIZE_GB} GB): ${db_host_workloads}"
 echo "Public Storage Account Containers Count: $publicStorageContainersCount (Workload Units: ${public_storage_container_workloads})"
 echo "Private Storage Account Containers Count: $privateStorageContainersCount (Workload Units: ${private_storage_container_workloads})"
 echo "Data Disks Count: $dataDisksCount (Workload Units: ${data_disk_workloads})"
