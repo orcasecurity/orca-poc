@@ -272,7 +272,7 @@ SERVICES_CONF: Dict[str, Any] = {
     "ddb": {
         "function": get_region_dynamodb_resources,
         "display_name": "Data Warehouses - DynamoDB",
-        "workload_units": 50
+        "workload_units": 4
     },
     "redshift": {
         "function": get_region_redshift_resources,
