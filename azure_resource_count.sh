@@ -202,6 +202,7 @@ for subscription in $subscriptions; do
     storageAccountList=$(cat "${_temp_subscription_output}")
     currentPrivateContainersCount=0
     currentPublicContainersCount=0
+    currentWebsiteCount=0
     for storageAccount in $(echo "$storageAccountList" | jq -c '.[]'); do
         storageAccountName=$(echo $storageAccount | jq -r '.name')
         allowBlobPublicAccess=$(echo $storageAccount | jq -r '.allowBlobPublicAccess')
@@ -212,7 +213,10 @@ for subscription in $subscriptions; do
         for container in $(echo "$containerList" | jq -c '.[]'); do
             containerName=$(echo $container | jq -r '.name')
             containerPublicAccess=$(echo $container | jq -r '.publicAccess')
-            if [[ ("$allowBlobPublicAccess" == "true" && "$containerPublicAccess" != "null") || "$containerName" == "\$web" ]]; then
+            if [[ "$containerName" == "\$web" ]]; then
+                let currentPublicContainersCount++
+                let currentWebsiteCount++
+            elif [[ "$allowBlobPublicAccess" == "true" && "$containerPublicAccess" != "null" ]]; then
                 let currentPublicContainersCount++
             else
                 let currentPrivateContainersCount++
@@ -220,7 +224,7 @@ for subscription in $subscriptions; do
         done
     done
     if [ -n "$currentPublicContainersCount" ]; then
-        echo "Public Storage Account Containers Count: $currentPublicContainersCount"
+        echo "Public Storage Account Containers Count: $currentPublicContainersCount (including $currentWebsiteCount websites)"
         publicStorageContainersCount=$((publicStorageContainersCount + $currentPublicContainersCount))
     fi
     if [ -n "$currentPrivateContainersCount" ]; then
