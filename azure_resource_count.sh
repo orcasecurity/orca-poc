@@ -90,6 +90,7 @@ vmImageCount=0
 aksNodesCount=0
 privateStorageContainersCount=0
 publicStorageContainersCount=0
+dataDisksCount=0
 
 # Set a counter for progress indicator
 counter=0
@@ -229,7 +230,7 @@ for subscription in $subscriptions; do
 
     # Get the number of data (non-os) disks
     az vm list --query "[].storageProfile.dataDisks"  --subscription $subscription \
-    | jq -r '.[][] | select(.diskSizeGb <= 1024) | .diskSizeGb' \| wc -l > ${_temp_subscription_output} 2>> $LOG_FILE \
+    | jq -r '.[][] | select(.diskSizeGb <= 1024) | .diskSizeGb' | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE \
     ||  echo "Failed to get data disks for subscription ${subscription}"
     currentDataDisksCount=$(cat "${_temp_subscription_output}")
     if [ -n "$currentDataDisksCount" ]; then
