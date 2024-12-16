@@ -1,12 +1,14 @@
 #!/bin/bash
 
 LOG_FILE='azure_resource_count.log'
+MAX_DB_SIZE_GB=1024
 WORKLOAD_VM_UNITS=1
 WORKLOAD_FUNCTION_UNITS=50
 WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
 WORKLOAD_VM_IMAGE_UNITS=1
 WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
+WORKLOAD_DB_UNITS=1
 WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS=10
 WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS=10
 WORKLOAD_DATA_DISK_UNITS=2.5
@@ -53,6 +55,13 @@ while [ "$1" != "" ]; do
                                 fi
                                 management_group=$1
                                 ;;
+        -mds | --max-db-size-gb ) shift
+                                if [ "$1" == "" ]; then
+                                  echo "Error: The --max-db-size-gb (-s) flag requires a value."
+                                  exit 1
+                                fi
+                                MAX_DB_SIZE_GB=$1
+                                ;;
         * )                     echo "Error: Unknown input flag $1"
                                 exit 1
     esac
@@ -88,6 +97,7 @@ ContainerCount=0
 containerImageCount=0
 vmImageCount=0
 aksNodesCount=0
+dbCount=0
 privateStorageContainersCount=0
 publicStorageContainersCount=0
 dataDisksCount=0
@@ -197,6 +207,30 @@ for subscription in $subscriptions; do
         aksNodesCount=$((aksNodesCount + currentNodesCount))
     fi
 
+        # get azure sql databases
+    az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
+    servers=$(cat "${_temp_subscription_output}")
+    currentAzureDbCount=0
+    db_size_threshold_in_bytes=$((MAX_DB_SIZE_GB * 1000 * 1000 * 1000))
+    for server in $(echo "$servers" | jq -c '.[]'); do
+      server_name=$(echo $server | jq -r '.name')
+      rg_name=$(echo $server | jq -r '.resourceGroup')
+      # filter out database with name "master"
+      az sql db list --subscription $subscription --server $server_name --resource-group $rg_name --query "[?name!='master'].name" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
+      for db in $(cat "${_temp_subscription_output}"); do
+        # filter out db with size greater than 1TB
+        az sql db list-usages --subscription $subscription --server $server_name --resource-group $rg_name --name $db --query "[?currentValue.to_number(@) <= \`${db_size_threshold_in_bytes}\` && name=='database_allocated_size'].id" -o tsv > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases size for subscription ${subscription}"
+        # only one here
+        if [ -s ${_temp_subscription_output} ]; then
+          currentAzureDbCount=$((currentAzureDbCount + 1))
+        fi
+      done
+    done
+    if [ -n "$currentAzureDbCount" ]; then
+        echo "Managed Databases (up to ${MAX_DB_SIZE_GB} GB): $currentAzureDbCount"
+        dbCount=$((dbCount + currentAzureDbCount))
+    fi
+
     # Get the number of public and private buckets
     az storage account list --subscription $subscription --query "[].{name: name, allowBlobPublicAccess: allowBlobPublicAccess}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Storage Accounts for subscription ${subscription}"
     storageAccountList=$(cat "${_temp_subscription_output}")
@@ -278,6 +312,10 @@ container_host_workloads=$(( ( aksNodesCount + WORKLOAD_CONTAINER_HOST_UNITS / 2
 if [[ $container_host_workloads -eq 0 && $aksNodesCount -gt 0 ]]; then
     container_host_workloads=1
 fi
+db_host_workloads=$(( ( dbCount + WORKLOAD_DB_UNITS / 2 ) / WORKLOAD_DB_UNITS ))
+if [[ $db_host_workloads -eq 0 && $dbCount -gt 0 ]]; then
+    db_host_workloads=1
+fi
 public_storage_container_workloads=$(( ( publicStorageContainersCount + WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS / 2 ) / WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS ))
 if [[ $public_storage_container_workloads -eq 0 && $publicStorageContainersCount -gt 0 ]]; then
     public_storage_container_workloads=1
@@ -290,7 +328,7 @@ data_disk_workloads=$(awk "BEGIN {print $dataDisksCount / $WORKLOAD_DATA_DISK_UN
 data_disk_workloads=$(awk "BEGIN {print ($data_disk_workloads) == int($data_disk_workloads) ? ($data_disk_workloads) : int($data_disk_workloads) + 1}")
 
 total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + \
-container_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
+container_host_workloads + db_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -301,6 +339,7 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
+echo "Managed Databases Hosts Count: (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): ${db_host_workloads}"
 echo "Public Storage Account Containers Count: $publicStorageContainersCount (Workload Units: ${public_storage_container_workloads})"
 echo "Private Storage Account Containers Count: $privateStorageContainersCount (Workload Units: ${private_storage_container_workloads})"
 echo "Data Disks Count: $dataDisksCount (Workload Units: ${data_disk_workloads})"

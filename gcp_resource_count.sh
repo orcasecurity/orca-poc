@@ -8,6 +8,8 @@ WORKLOAD_SERVERLESS_CONTAINER_UNITS=10
 WORKLOAD_VM_IMAGE_UNITS=1
 WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
+WORKLOAD_MANAGED_DB_UNITS=1
+WORKLOAD_DATAWAREHOUSE_UNITS=4
 
 
 _tmp_files=$(mktemp)
@@ -23,6 +25,7 @@ _make_temp_file() {
 }
 
 PROJECT_ID=""
+MAX_DB_SIZE_GB=1024
 
 while [[ $# -gt 0 ]]
 do
@@ -30,6 +33,11 @@ do
     case $key in
         -p|--project)
         PROJECT_ID="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        -s|--max-db-size-gb)
+        MAX_DB_SIZE_GB="$2"
         shift # past argument
         shift # past value
         ;;
@@ -52,6 +60,7 @@ else
     echo "[+] counting resources for project ${PROJECT_ID}"
 fi
 echo
+echo "Max DB Size: ${MAX_DB_SIZE_GB}GB"
 
 total_vms=0
 total_functions=0
@@ -59,6 +68,8 @@ total_cloud_run=0
 total_container_images=0
 total_vm_images=0
 total_gke_nodes=0
+total_managed_dbs=0
+total_datawarehouses_datasets=0
 counter=0
 _temp_project_output=$(_make_temp_file)
 for project in $PROJECTS; do
@@ -122,6 +133,23 @@ for project in $PROJECTS; do
       echo "Container Hosts Count: $project_nodes_count"
     fi
 
+    # Fetch Cloud SQL databases
+    gcloud -q sql instances list --project "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get Cloud SQL DBs for project ${project}"
+    project_managed_db_count=$(cat "${_temp_project_output}" | jq -r --argjson max_db_size_gb "$MAX_DB_SIZE_GB" '[.[] | select(.state == "RUNNABLE" and ((.settings.dataDiskSizeGb // "0") | tonumber) <= $max_db_size_gb)] | length')
+    if [ -n "$project_managed_db_count" ]; then
+      total_managed_dbs=$((total_managed_dbs + project_managed_db_count))
+      echo "Managed Databases Count: $project_managed_db_count"
+    fi
+
+    # Fetch BigQuery datasets
+    bq -q ls --project_id "${project}" --format json > ${_temp_project_output} 2>> $LOG_FILE || echo "Failed to get BigQuery Datasets for project ${project}"
+    project_datadatawarehouse_count=$(cat "${_temp_project_output}" | jq -r '. | length')
+    if [ -n "$project_datadatawarehouse_count" ]; then
+      total_datawarehouses_datasets=$((total_datawarehouses_datasets + project_datadatawarehouse_count))
+      echo "DataWarehouses Count: $project_datadatawarehouse_count"
+    fi
+
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$PROJECT_LEN" ]; then
@@ -159,7 +187,15 @@ container_host_workloads=$(( ( total_gke_nodes + WORKLOAD_CONTAINER_HOST_UNITS /
 if [[ $container_host_workloads -eq 0 && $total_gke_nodes -gt 0 ]]; then
     container_host_workloads=1
 fi
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads ))
+managed_db_workloads=$(( ( total_managed_dbs + WORKLOAD_MANAGED_DB_UNITS / 2 ) / WORKLOAD_MANAGED_DB_UNITS ))
+if [[ managed_db_workloads -eq 0 && total_managed_dbs -gt 0 ]]; then
+    managed_db_workloads=1
+fi
+datawarehouse_workloads=$(( ( total_datawarehouses_datasets + WORKLOAD_DATAWAREHOUSE_UNITS / 2 ) / WORKLOAD_DATAWAREHOUSE_UNITS ))
+if [[ $datawarehouse_workloads -eq 0 && $total_datawarehouses_datasets -gt 0 ]]; then
+    datawarehouse_workloads=1
+fi
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + managed_db_workloads + datawarehouse_workloads ))
 
 echo "=============="
 echo "Total results:"
@@ -170,6 +206,8 @@ echo "Serverless Containers Count: $total_cloud_run (Workload Units: ${container
 echo "Container Images Count: $total_container_images (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $total_vm_images (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $total_gke_nodes (Workload Units: ${container_host_workloads})"
+echo "Managed Databases Count (up to $((MAX_DB_SIZE_GB / 1024)) TB): $total_managed_dbs (Workload Units: ${managed_db_workloads})"
+echo "DataWarehouses Count: $total_datawarehouses_datasets (Workload Units: ${datawarehouse_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
