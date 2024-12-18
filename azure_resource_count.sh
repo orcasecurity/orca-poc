@@ -207,7 +207,7 @@ for subscription in $subscriptions; do
         aksNodesCount=$((aksNodesCount + currentNodesCount))
     fi
 
-        # get azure sql databases
+    # get azure sql databases
     az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
     servers=$(cat "${_temp_subscription_output}")
     currentAzureDbCount=0
@@ -267,10 +267,16 @@ for subscription in $subscriptions; do
     fi
 
     # Get the number of data (non-os) disks
-    az vm list --query "[].storageProfile.dataDisks"  --subscription $subscription \
-    | jq -r '.[][] | select(.diskSizeGb <= 1024) | .diskSizeGb' | wc -l > ${_temp_subscription_output} 2>> $LOG_FILE \
-    ||  echo "Failed to get data disks for subscription ${subscription}"
-    currentDataDisksCount=$(cat "${_temp_subscription_output}")
+    az vm list --query "[].storageProfile.dataDisks" --subscription $subscription | jq -r '.[][] | .name' | xargs \
+    > ${_temp_subscription_output} 2>> $LOG_FILE || echo "Failed to get data disks for subscription ${subscription}"
+    diskNames=$(cat "${_temp_subscription_output}")
+
+    az disk list --subscription $subscription --query "[].{DiskName: name, Size: diskSizeGB}" \
+    > ${_temp_subscription_output} 2>> $LOG_FILE || echo "Failed to get disks for subscription ${subscription}"
+    diskSizes=$(cat "${_temp_subscription_output}")
+
+    filters=$(echo "$diskNames" | sed 's/ /" or .DiskName == "/g')
+    currentDataDisksCount=$(echo "$diskSizes" | jq ".[] | select((.DiskName == \"$filters\") and .diskSizeGb <= 1024) | .Size" | wc -l | awk '{print $1}')
     if [ -n "$currentDataDisksCount" ]; then
         echo "Data Disks Count: $currentDataDisksCount"
         dataDisksCount=$((dataDisksCount + $currentDataDisksCount))
@@ -325,7 +331,7 @@ if [[ $private_storage_container_workloads -eq 0 && $privateStorageContainersCou
     private_storage_container_workloads=1
 fi
 data_disk_workloads=$(awk "BEGIN {print $dataDisksCount / $WORKLOAD_DATA_DISK_UNITS}")
-data_disk_workloads=$(awk "BEGIN {print ($data_disk_workloads) == int($data_disk_workloads) ? ($data_disk_workloads) : int($data_disk_workloads) + 1}")
+data_disk_workloads=$(awk "BEGIN {print ($data_disk_workloads == int($data_disk_workloads)) ? ($data_disk_workloads) : int($data_disk_workloads) + 1}")
 
 total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + \
 container_host_workloads + db_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
