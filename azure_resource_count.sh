@@ -9,6 +9,10 @@ WORKLOAD_VM_IMAGE_UNITS=1
 WORKLOAD_CONTAINER_IMAGE_UNITS=10
 WORKLOAD_CONTAINER_HOST_UNITS=1
 WORKLOAD_DB_UNITS=1
+WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS=10
+WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS=10
+WORKLOAD_DATA_DISK_UNITS=2.5
+
 _tmp_files=$(mktemp)
 cleanup() {
   rm -f $(< "${_tmp_files}") "${_tmp_files}"
@@ -94,6 +98,9 @@ containerImageCount=0
 vmImageCount=0
 aksNodesCount=0
 dbCount=0
+privateStorageContainersCount=0
+publicStorageContainersCount=0
+dataDisksCount=0
 
 # Set a counter for progress indicator
 counter=0
@@ -199,6 +206,7 @@ for subscription in $subscriptions; do
         echo "Container Hosts Count: $currentNodesCount"
         aksNodesCount=$((aksNodesCount + currentNodesCount))
     fi
+
     # get azure sql databases
     az sql server list --subscription $subscription --query "[].{name: name, resourceGroup: resourceGroup}" -o json> ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Azure SQL Databases for subscription ${subscription}"
     servers=$(cat "${_temp_subscription_output}")
@@ -222,6 +230,58 @@ for subscription in $subscriptions; do
         echo "Managed Databases (up to ${MAX_DB_SIZE_GB} GB): $currentAzureDbCount"
         dbCount=$((dbCount + currentAzureDbCount))
     fi
+
+    # Get the number of public and private buckets
+    az storage account list --subscription $subscription --query "[].{name: name, allowBlobPublicAccess: allowBlobPublicAccess}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Storage Accounts for subscription ${subscription}"
+    storageAccountList=$(cat "${_temp_subscription_output}")
+    currentPrivateContainersCount=0
+    currentPublicContainersCount=0
+    currentWebsiteCount=0
+    for storageAccount in $(echo "$storageAccountList" | jq -c '.[]'); do
+        storageAccountName=$(echo $storageAccount | jq -r '.name')
+        allowBlobPublicAccess=$(echo $storageAccount | jq -r '.allowBlobPublicAccess')
+
+        az storage container list --subscription $subscription --account-name $storageAccountName --auth-mode login --query "[].{name: name, publicAccess: properties.publicAccess}" -o json > ${_temp_subscription_output} 2>> $LOG_FILE ||  echo "Failed to get Storage Containers for subscription ${subscription}"
+
+        containerList=$(cat "${_temp_subscription_output}")
+        for container in $(echo "$containerList" | jq -c '.[]'); do
+            containerName=$(echo $container | jq -r '.name')
+            containerPublicAccess=$(echo $container | jq -r '.publicAccess')
+            if [[ "$containerName" == "\$web" ]]; then
+                let currentPublicContainersCount++
+                let currentWebsiteCount++
+            elif [[ "$allowBlobPublicAccess" == "true" && "$containerPublicAccess" != "null" ]]; then
+                let currentPublicContainersCount++
+            else
+                let currentPrivateContainersCount++
+            fi
+        done
+    done
+    if [ -n "$currentPublicContainersCount" ]; then
+        echo "Public Storage Account Containers Count: $currentPublicContainersCount (including $currentWebsiteCount websites)"
+        publicStorageContainersCount=$((publicStorageContainersCount + $currentPublicContainersCount))
+    fi
+    if [ -n "$currentPrivateContainersCount" ]; then
+        echo "Private Storage Account Containers Count: $currentPrivateContainersCount"
+        privateStorageContainersCount=$((privateStorageContainersCount + $currentPrivateContainersCount))
+    fi
+
+    # Get the number of data (non-os) disks
+    az vm list --query "[].storageProfile.dataDisks" --subscription $subscription | jq -r '.[][] | .name' | xargs \
+    > ${_temp_subscription_output} 2>> $LOG_FILE || echo "Failed to get data disks for subscription ${subscription}"
+    diskNames=$(cat "${_temp_subscription_output}")
+
+    az disk list --subscription $subscription --query "[].{DiskName: name, Size: diskSizeGB}" \
+    > ${_temp_subscription_output} 2>> $LOG_FILE || echo "Failed to get disks for subscription ${subscription}"
+    diskSizes=$(cat "${_temp_subscription_output}")
+
+    filters=$(echo "$diskNames" | sed 's/ /" or .DiskName == "/g')
+    currentDataDisksCount=$(echo "$diskSizes" | jq ".[] | select((.DiskName == \"$filters\") and .diskSizeGb <= 1024) | .Size" | wc -l | awk '{print $1}')
+    if [ -n "$currentDataDisksCount" ]; then
+        echo "Data Disks Count: $currentDataDisksCount"
+        dataDisksCount=$((dataDisksCount + $currentDataDisksCount))
+    fi
+
     #Increment counter
     counter=$((counter+1))
     if [ -n "$management_group" ]; then
@@ -258,13 +318,23 @@ container_host_workloads=$(( ( aksNodesCount + WORKLOAD_CONTAINER_HOST_UNITS / 2
 if [[ $container_host_workloads -eq 0 && $aksNodesCount -gt 0 ]]; then
     container_host_workloads=1
 fi
-
 db_host_workloads=$(( ( dbCount + WORKLOAD_DB_UNITS / 2 ) / WORKLOAD_DB_UNITS ))
 if [[ $db_host_workloads -eq 0 && $dbCount -gt 0 ]]; then
     db_host_workloads=1
 fi
+public_storage_container_workloads=$(( ( publicStorageContainersCount + WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS / 2 ) / WORKLOAD_PUBLIC_STORAGE_CONTAINER_UNITS ))
+if [[ $public_storage_container_workloads -eq 0 && $publicStorageContainersCount -gt 0 ]]; then
+    public_storage_container_workloads=1
+fi
+private_storage_container_workloads=$(( ( privateStorageContainersCount + WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS / 2 ) / WORKLOAD_PRIVATE_STORAGE_CONTAINER_UNITS ))
+if [[ $private_storage_container_workloads -eq 0 && $privateStorageContainersCount -gt 0 ]]; then
+    private_storage_container_workloads=1
+fi
+data_disk_workloads=$(awk "BEGIN {print $dataDisksCount / $WORKLOAD_DATA_DISK_UNITS}")
+data_disk_workloads=$(awk "BEGIN {print ($data_disk_workloads == int($data_disk_workloads)) ? ($data_disk_workloads) : int($data_disk_workloads) + 1}")
 
-total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + container_host_workloads + db_host_workloads))
+total_workloads=$(( vm_workloads + function_workloads + container_workloads + container_image_workloads + vm_image_workloads + \
+container_host_workloads + db_host_workloads + public_storage_container_workloads + private_storage_container_workloads + data_disk_workloads))
 
 echo "=============="
 echo "Total results:"
@@ -275,7 +345,10 @@ echo "Serverless Containers Count: $ContainerCount (Workload Units: ${container_
 echo "Container Images Count: $containerImageCount (Workload Units: ${container_image_workloads})"
 echo "VM Images Count: $vmImageCount (Workload Units: ${vm_image_workloads})"
 echo "Container Hosts Count: $aksNodesCount (Workload Units: ${container_host_workloads})"
-echo "Managed Databases Hosts Count: (up to ${DB_SIZE_THRESHOLD_IN_GB} GB): ${db_host_workloads}"
+echo "Managed Databases Hosts Count: (up to ${MAX_DB_SIZE_GB} GB): ${db_host_workloads}"
+echo "Public Storage Account Containers Count: $publicStorageContainersCount (Workload Units: ${public_storage_container_workloads})"
+echo "Private Storage Account Containers Count: $privateStorageContainersCount (Workload Units: ${private_storage_container_workloads})"
+echo "Data Disks Count: $dataDisksCount (Workload Units: ${data_disk_workloads})"
 echo "--------------------------------------"
 echo "TOTAL Estimated Workload Units: ${total_workloads}"
 echo
