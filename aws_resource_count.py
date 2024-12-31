@@ -314,12 +314,15 @@ def main():
     _parser.add_argument("--show-logs-per-account", action="store_true",
                          help=f"Log resource count per AWS account")
 
+    _parser.add_argument("--role-name", help="the role name to be assumed for organization member accounts. If not provided, it defaults to 'OrganizationAccountAccessRole'.")
+
     args = _parser.parse_args()
     set_skip_resources(args)
     if not SERVICES_CONF:
         logger.info("All AWS services requested to be skipped, please choose at least one service to count.")
         return
     show_logs_per_account: bool = args.show_logs_per_account
+    role_name: bool = args.role_name
     session = boto3.Session()
     total_results: Dict[str, int] = current_account_resources_count(session)
     accounts_list: List[str] = args.accounts_list.strip().split(",") if args.accounts_list else []
@@ -331,10 +334,10 @@ def main():
         try:
             if not accounts_list:
                 logger.info("Start Counting resources for all the Organization's accounts...")
-                results_of_all_regions = cove(regions=ALL_REGIONS)(get_cove_region_resources)()
+                results_of_all_regions = cove(regions=ALL_REGIONS, rolename=role_name)(get_cove_region_resources)()
             else:
                 logger.info(f"Start Counting resources for the following accounts: {accounts_list}...")
-                results_of_all_regions = cove(regions=ALL_REGIONS, target_ids=accounts_list)(get_cove_region_resources)()
+                results_of_all_regions = cove(regions=ALL_REGIONS, target_ids=accounts_list, rolename=role_name)(get_cove_region_resources)()
             if show_logs_per_account:  # log current account results
                 print_results(total_results, account_id=get_aws_account_id(session=session))
             for result in results_of_all_regions["Results"]:
